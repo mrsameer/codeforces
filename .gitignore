@@ -1,0 +1,8 @@
+.bin/
+*.o
+*.out
+!*.[0-9]*.out
+.DS_Store
+._*
+a.out
+*.dSYM/

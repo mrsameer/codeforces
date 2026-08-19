@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# cf — tiny Codeforces workflow helper.
+#
+#   cf new <path>          create <path>.cpp from template.cpp (+ empty sample files)
+#   cf build <file.cpp>    compile only
+#   cf run <file.cpp>      compile and run interactively on stdin
+#   cf test <file.cpp>     compile and run against <file>.N.in / <file>.N.out samples
+#
+# Paths may be given with or without the .cpp extension.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN="$ROOT/.bin"
+STD="${CF_STD:-c++20}"
+CXX="${CXX:-g++}"
+FLAGS=(-std="$STD" -O2 -Wall -Wextra -Wshadow -DLOCAL -I "$ROOT/include")
+# Sanitizers catch UB and out-of-bounds locally; set CF_SANITIZE=0 to disable.
+if [[ "${CF_SANITIZE:-1}" == "1" ]]; then
+    FLAGS+=(-fsanitize=address,undefined -fno-omit-frame-pointer)
+fi
+
+die() { echo "cf: $*" >&2; exit 1; }
+
+# Normalize an argument into an absolute .cpp path.
+src_path() {
+    local p="$1"
+    [[ "$p" == *.cpp ]] || p="$p.cpp"
+    [[ "$p" == /* ]] || p="$PWD/$p"
+    printf '%s' "$p"
+}
+
+compile() {
+    local src="$1"
+    [[ -f "$src" ]] || die "no such file: $src"
+    mkdir -p "$BIN"
+    local out="$BIN/$(echo "${src#$ROOT/}" | tr '/' '_' | sed 's/\.cpp$//')"
+    "$CXX" "${FLAGS[@]}" "$src" -o "$out" || die "compilation failed"
+    printf '%s' "$out"
+}
+
+cmd_new() {
+    [[ $# -ge 1 ]] || die "usage: cf new <path>"
+    local src; src="$(src_path "$1")"
+    [[ -e "$src" ]] && die "already exists: $src"
+    mkdir -p "$(dirname "$src")"
+    cp "$ROOT/template.cpp" "$src"
+    local stem="${src%.cpp}"
+    touch "$stem.1.in" "$stem.1.out"
+    echo "created $src"
+    echo "samples $stem.1.in / $stem.1.out"
+}
+
+cmd_build() { local out; out="$(compile "$(src_path "$1")")"; echo "built $out"; }
+
+cmd_run() { local out; out="$(compile "$(src_path "$1")")"; echo "--- running (ctrl-d to end input) ---" >&2; "$out"; }
+
+cmd_test() {
+    local src; src="$(src_path "$1")"
+    local out; out="$(compile "$src")"
+    local stem="${src%.cpp}"
+    shopt -s nullglob
+    local inputs=("$stem".*.in)
+    shopt -u nullglob
+    [[ ${#inputs[@]} -gt 0 ]] || die "no sample files matching $stem.*.in"
+
+    local pass=0 fail=0
+    for in_file in "${inputs[@]}"; do
+        local name="${in_file##*/}"
+        local exp_file="${in_file%.in}.out"
+        local got status=0
+        got="$("$out" < "$in_file" 2>/dev/null)" || status=$?
+        if [[ $status -ne 0 ]]; then
+            echo "✗ $name — exited with status $status"; ((fail++)); continue
+        fi
+        if [[ ! -s "$exp_file" ]]; then
+            echo "· $name — no expected output, got:"; echo "$got" | sed 's/^/    /'; continue
+        fi
+        # Compare ignoring trailing whitespace and trailing blank lines.
+        if diff -q <(sed -e 's/[[:space:]]*$//' <<<"$got") \
+                   <(sed -e 's/[[:space:]]*$//' "$exp_file") >/dev/null; then
+            echo "✓ $name"; ((pass++))
+        else
+            echo "✗ $name"
+            diff <(sed -e 's/[[:space:]]*$//' "$exp_file") \
+                 <(sed -e 's/[[:space:]]*$//' <<<"$got") \
+                 --label expected --label got -u | sed 's/^/    /'
+            ((fail++))
+        fi
+    done
+    echo "$pass passed, $fail failed"
+    [[ $fail -eq 0 ]]
+}
+
+[[ $# -ge 1 ]] || die "usage: cf {new|build|run|test} <file>"
+sub="$1"; shift
+case "$sub" in
+    new)   cmd_new "$@" ;;
+    build) cmd_build "$@" ;;
+    run)   cmd_run "$@" ;;
+    test)  cmd_test "$@" ;;
+    *)     die "unknown command: $sub" ;;
+esac
