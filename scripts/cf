@@ -21,11 +21,18 @@ fi
 
 die() { echo "cf: $*" >&2; exit 1; }
 
-# Normalize an argument into an absolute .cpp path.
+# Normalize an argument into an absolute .cpp path. Relative paths resolve
+# against the current directory first, then against the repo root, so the
+# helper works from anywhere.
 src_path() {
     local p="$1"
     [[ "$p" == *.cpp ]] || p="$p.cpp"
-    [[ "$p" == /* ]] || p="$PWD/$p"
+    if [[ "$p" != /* ]]; then
+        if [[ -f "$PWD/$p" ]]; then p="$PWD/$p"
+        elif [[ -f "$ROOT/$p" ]]; then p="$ROOT/$p"
+        else p="$PWD/$p"          # keep cwd-relative for the "not found" message
+        fi
+    fi
     printf '%s' "$p"
 }
 
@@ -40,7 +47,12 @@ compile() {
 
 cmd_new() {
     [[ $# -ge 1 ]] || die "usage: cf new <path>"
-    local src; src="$(src_path "$1")"
+    # New files have nothing on disk to resolve against, so anchor a relative
+    # path to the repo root whenever the caller is outside it.
+    local src="$1"
+    [[ "$src" == *.cpp ]] || src="$src.cpp"
+    if [[ "$src" != /* && "$PWD" != "$ROOT"* ]]; then src="$ROOT/$src"; fi
+    [[ "$src" == /* ]] || src="$PWD/$src"
     [[ -e "$src" ]] && die "already exists: $src"
     mkdir -p "$(dirname "$src")"
     cp "$ROOT/template.cpp" "$src"
