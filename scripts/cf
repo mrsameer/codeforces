@@ -85,17 +85,14 @@ cmd_test() {
             echo "✗ $name — exited with status $status"; ((fail++)); continue
         fi
         if [[ ! -s "$exp_file" ]]; then
-            echo "· $name — no expected output, got:"; echo "$got" | sed 's/^/    /'; continue
+            echo "· $name — no expected output yet, your program printed:"
+            echo "$got" | sed 's/^/      /'
+            continue
         fi
-        # Compare ignoring trailing whitespace and trailing blank lines.
-        if diff -q <(sed -e 's/[[:space:]]*$//' <<<"$got") \
-                   <(sed -e 's/[[:space:]]*$//' "$exp_file") >/dev/null; then
-            echo "✓ $name"; ((pass++))
+        printf '%s\n' "$got" > "$BIN/.actual"
+        if python3 "$ROOT/scripts/_compare.py" "$exp_file" "$BIN/.actual" "$name"; then
+            ((pass++))
         else
-            echo "✗ $name"
-            diff <(sed -e 's/[[:space:]]*$//' "$exp_file") \
-                 <(sed -e 's/[[:space:]]*$//' <<<"$got") \
-                 --label expected --label got -u | sed 's/^/    /'
             ((fail++))
         fi
     done
