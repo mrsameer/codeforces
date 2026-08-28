@@ -12,8 +12,11 @@ include/bits/       <bits/stdc++.h> shim for Apple clang (libc++ lacks it)
 snippets/           reusable algorithm headers (C++)
 snippets/py/        the same algorithms as importable Python modules
 contests/           one folder per contest, e.g. contests/1234/a.cpp
-practice/           topic practice, e.g. practice/graphs/dijkstra.py
+practice/           solved problems by topic, e.g. practice/graphs/20c_dijkstra.py
 ```
+
+`practice/README.md` covers the naming convention, how to add a problem, and
+when to pick Python over C++.
 
 ## Usage
 
@@ -138,6 +141,10 @@ than importing.
 
 There is no Python equivalent of `modint.hpp` — ints are arbitrary precision
 and `pow(base, exp, mod)` is built in.
+
+`practice/` has a worked, sample-tested solution for each of these: `dsu/`,
+`graphs/`, and `number_theory/` each solve a real problem with the snippet
+pasted in, which is the shape an actual submission takes.
 
 Codeforces runs real GCC, which has a genuine `<bits/stdc++.h>`, so the shim in
 `include/` never needs to be submitted — it only makes local builds work.
