@@ -78,6 +78,20 @@ Codeforces actually runs:
 CF_PYTHON=pypy3 cf test practice/graphs/1234a_slug.py
 ```
 
+### PyPy on the judge, two traps
+
+**Recursion limits cost memory.** `sys.setrecursionlimit(300_000)` is cheap
+locally but can trip the memory limit outright under PyPy 3-64 on Codeforces —
+the process dies at startup, reporting memory pinned at the cap and a few
+milliseconds of runtime, which reads like a memory bug in your code and is not.
+`template.py` therefore sets no limit. Write recursion as an explicit stack, or
+raise the limit to the smallest value that works and submit under CPython.
+
+**PyPy is not always the right pick.** It wins on tight loops, but it starts
+slower and carries a bigger baseline footprint. For a problem that is a few
+lines of string or arithmetic work, plain CPython is the safer submission —
+there is no speed to gain and less that can go wrong.
+
 ## Verifying a solution you are unsure of
 
 For counting and construction problems, a brute force you trust beats staring at

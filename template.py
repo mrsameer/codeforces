@@ -68,7 +68,11 @@ def main() -> None:
         solve()
 
 
+# Deliberately no sys.setrecursionlimit() here. CPython's default of 1000 is
+# low, but raising it costs memory on the judge — under PyPy on Codeforces a
+# large limit can trip the memory limit at startup, before main() even runs.
+# Prefer an explicit stack; if you truly need recursion, raise the limit inside
+# main() to the smallest value that works and submit under CPython.
 if __name__ == "__main__":
-    sys.setrecursionlimit(300_000)
     main()
     sys.stdout.write("\n".join(_out) + ("\n" if _out else ""))
