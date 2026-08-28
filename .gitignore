@@ -6,3 +6,5 @@
 ._*
 a.out
 *.dSYM/
+__pycache__/
+*.py[co]

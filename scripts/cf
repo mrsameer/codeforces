@@ -1,75 +1,128 @@
 #!/usr/bin/env bash
-# cf — tiny Codeforces workflow helper.
+# cf — tiny Codeforces workflow helper for C++ and Python.
 #
-#   cf new <path>          create <path>.cpp from template.cpp (+ empty sample files)
-#   cf build <file.cpp>    compile only
-#   cf run <file.cpp>      compile and run interactively on stdin
-#   cf test <file.cpp>     compile and run against <file>.N.in / <file>.N.out samples
+#   cf new <path> [--py]   create <path>.cpp (or .py) from the template
+#                          (+ empty sample files)
+#   cf build <file>        compile C++ / syntax-check Python
+#   cf run <file>          build and run interactively on stdin
+#   cf test <file>         build and run against <file>.N.in / <file>.N.out samples
 #
-# Paths may be given with or without the .cpp extension.
+# The extension picks the language. Give it explicitly (`a.py`) or leave it off
+# (`a`) and cf uses whichever file exists, preferring .cpp when both do.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BIN="$ROOT/.bin"
 STD="${CF_STD:-c++20}"
 CXX="${CXX:-g++}"
+PY="${CF_PYTHON:-python3}"
 FLAGS=(-std="$STD" -O2 -Wall -Wextra -Wshadow -DLOCAL -I "$ROOT/include")
 # Sanitizers catch UB and out-of-bounds locally; set CF_SANITIZE=0 to disable.
 if [[ "${CF_SANITIZE:-1}" == "1" ]]; then
     FLAGS+=(-fsanitize=address,undefined -fno-omit-frame-pointer)
 fi
+# Keep __pycache__ out of the source tree, and let template.py's dbg() speak.
+export PYTHONPYCACHEPREFIX="$BIN/pycache"
+export CF_LOCAL=1
+
+mkdir -p "$BIN"
 
 die() { echo "cf: $*" >&2; exit 1; }
 
-# Normalize an argument into an absolute .cpp path. Relative paths resolve
+# Normalize an argument into an absolute source path. Relative paths resolve
 # against the current directory first, then against the repo root, so the
-# helper works from anywhere.
+# helper works from anywhere. A missing extension resolves to whichever of
+# .cpp / .py exists on disk.
 src_path() {
-    local p="$1"
-    [[ "$p" == *.cpp ]] || p="$p.cpp"
-    if [[ "$p" != /* ]]; then
-        if [[ -f "$PWD/$p" ]]; then p="$PWD/$p"
-        elif [[ -f "$ROOT/$p" ]]; then p="$ROOT/$p"
-        else p="$PWD/$p"          # keep cwd-relative for the "not found" message
-        fi
-    fi
-    printf '%s' "$p"
+    local arg="$1" exts=(.cpp .py) bases=("$PWD" "$ROOT") base ext
+    case "$arg" in
+        *.cpp|*.py) exts=("") ;;
+    esac
+    if [[ "$arg" == /* ]]; then bases=(""); fi
+    for base in "${bases[@]}"; do
+        for ext in "${exts[@]}"; do
+            local candidate="${base:+$base/}$arg$ext"
+            [[ -f "$candidate" ]] && { printf '%s' "$candidate"; return; }
+        done
+    done
+    # Nothing found — build the path we would have expected, so the caller can
+    # report a readable "no such file" against it.
+    local fallback="$arg"
+    case "$fallback" in
+        *.cpp|*.py) ;;
+        *) fallback="$fallback.cpp" ;;
+    esac
+    [[ "$fallback" == /* ]] || fallback="$PWD/$fallback"
+    printf '%s' "$fallback"
 }
 
-compile() {
+# Build (or check) a source file and leave the command to execute in RUN_CMD.
+RUN_CMD=()
+prepare() {
     local src="$1"
     [[ -f "$src" ]] || die "no such file: $src"
-    mkdir -p "$BIN"
-    local out="$BIN/$(echo "${src#$ROOT/}" | tr '/' '_' | sed 's/\.cpp$//')"
-    "$CXX" "${FLAGS[@]}" "$src" -o "$out" || die "compilation failed"
-    printf '%s' "$out"
+    case "$src" in
+        *.cpp)
+            local out="$BIN/$(echo "${src#$ROOT/}" | tr '/' '_' | sed 's/\.cpp$//')"
+            "$CXX" "${FLAGS[@]}" "$src" -o "$out" || die "compilation failed"
+            RUN_CMD=("$out")
+            BUILT="$out"
+            ;;
+        *.py)
+            command -v "$PY" >/dev/null \
+                || die "no such interpreter: $PY (override with CF_PYTHON)"
+            "$PY" -m py_compile "$src" || die "syntax check failed"
+            RUN_CMD=("$PY" "$src")
+            BUILT="$src"
+            ;;
+        *) die "unsupported file type: $src (want .cpp or .py)" ;;
+    esac
 }
 
 cmd_new() {
-    [[ $# -ge 1 ]] || die "usage: cf new <path>"
+    local lang=cpp
+    local args=()
+    for arg in "$@"; do
+        case "$arg" in
+            --py|--python|-p) lang=py ;;
+            --cpp|-c)         lang=cpp ;;
+            *)                args+=("$arg") ;;
+        esac
+    done
+    [[ ${#args[@]} -ge 1 ]] || die "usage: cf new [--py] <path>"
+
+    local src="${args[0]}"
+    case "$src" in
+        *.cpp) lang=cpp ;;
+        *.py)  lang=py ;;
+        *)     src="$src.$lang" ;;
+    esac
     # New files have nothing on disk to resolve against, so anchor a relative
     # path to the repo root whenever the caller is outside it.
-    local src="$1"
-    [[ "$src" == *.cpp ]] || src="$src.cpp"
     if [[ "$src" != /* && "$PWD" != "$ROOT"* ]]; then src="$ROOT/$src"; fi
     [[ "$src" == /* ]] || src="$PWD/$src"
     [[ -e "$src" ]] && die "already exists: $src"
     mkdir -p "$(dirname "$src")"
-    cp "$ROOT/template.cpp" "$src"
-    local stem="${src%.cpp}"
+    cp "$ROOT/template.$lang" "$src"
+    if [[ "$lang" == py ]]; then chmod +x "$src"; fi
+    local stem="${src%.*}"
     touch "$stem.1.in" "$stem.1.out"
     echo "created $src"
     echo "samples $stem.1.in / $stem.1.out"
 }
 
-cmd_build() { local out; out="$(compile "$(src_path "$1")")"; echo "built $out"; }
+cmd_build() { prepare "$(src_path "$1")"; echo "built $BUILT"; }
 
-cmd_run() { local out; out="$(compile "$(src_path "$1")")"; echo "--- running (ctrl-d to end input) ---" >&2; "$out"; }
+cmd_run() {
+    prepare "$(src_path "$1")"
+    echo "--- running (ctrl-d to end input) ---" >&2
+    "${RUN_CMD[@]}"
+}
 
 cmd_test() {
     local src; src="$(src_path "$1")"
-    local out; out="$(compile "$src")"
-    local stem="${src%.cpp}"
+    prepare "$src"
+    local stem="${src%.*}"
     shopt -s nullglob
     local inputs=("$stem".*.in)
     shopt -u nullglob
@@ -80,7 +133,7 @@ cmd_test() {
         local name="${in_file##*/}"
         local exp_file="${in_file%.in}.out"
         local got status=0
-        got="$("$out" < "$in_file" 2>/dev/null)" || status=$?
+        got="$("${RUN_CMD[@]}" < "$in_file" 2>/dev/null)" || status=$?
         if [[ $status -ne 0 ]]; then
             echo "✗ $name — exited with status $status"; ((fail++)); continue
         fi
